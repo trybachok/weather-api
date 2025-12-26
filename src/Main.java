@@ -1,27 +1,64 @@
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Точка входа: конфиг, запуск сценария.
+ * Точка входа: запуск HTTP-сервера.
  */
 public class Main {
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
+        int port = 8080;
+        // Явно привязываемся к 0.0.0.0, чтобы сервер был доступен снаружи контейнера
+        HttpServer server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
+        server.createContext("/", new WeatherHandler());
+        server.setExecutor(java.util.concurrent.Executors.newFixedThreadPool(5));
+        System.out.println("Сервер успешно запущен и слушает на порту " + port);
+        System.out.println("Локальная ссылка: http://localhost:8080");
+        server.start();
+    }
 
-        WeatherApiClient apiClient = new WeatherApiClient(AppConstants.API_KEY);
-        WeatherParser parser = new WeatherParser();
-        WeatherService service = new WeatherService(apiClient, parser);
+    static class WeatherHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            WeatherApiClient apiClient = new WeatherApiClient(AppConstants.API_KEY);
+            WeatherParser parser = new WeatherParser();
+            WeatherService service = new WeatherService(apiClient, parser);
 
-        try {
-            service.printWeatherInfo(AppConstants.LAT, AppConstants.LON, AppConstants.LIMIT);
-        } catch (IOException | InterruptedException e) {
-            System.err.println("Ошибка при обращении к API погоды: " + e.getMessage());
+            String response;
+            int statusCode = 200;
+
+            try {
+                response = service.getWeatherHtml(AppConstants.LAT, AppConstants.LON, AppConstants.LIMIT);
+            } catch (IOException e) {
+                response = "<h1>Ошибка сети или API</h1><p>" + e.getMessage() + "</p>";
+                statusCode = 502;
+            } catch (InterruptedException e) {
+                response = "<h1>Выполнение прервано</h1>";
+                statusCode = 500;
+                Thread.currentThread().interrupt();
+            } catch (Exception e) {
+                response = "<h1>Произошла непредвиденная ошибка</h1><p>" + e.getMessage() + "</p>";
+                statusCode = 500;
+            }
+
+            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
+            exchange.sendResponseHeaders(statusCode, bytes.length);
+            OutputStream os = exchange.getResponseBody();
+            os.write(bytes);
+            os.close();
         }
     }
 }
@@ -43,6 +80,11 @@ class WeatherApiClient {
         String url = buildUrl(lat, lon, limit);
         HttpRequest request = buildRequest(url);
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            throw new IOException("API вернул ошибку. Статус-код: " + response.statusCode() + ". Ответ: " + response.body());
+        }
+
         return response.body();
     }
 
@@ -105,6 +147,26 @@ class WeatherService {
     public WeatherService(WeatherApiClient apiClient, WeatherParser parser) {
         this.apiClient = apiClient;
         this.parser = parser;
+    }
+
+    public String getWeatherHtml(String lat, String lon, int limit) throws IOException, InterruptedException {
+        String json = apiClient.getForecastJson(lat, lon, limit);
+
+        int currentTemp = parser.extractCurrentTemperature(json);
+        double averageTemp = parser.calculateAverageDayTemperature(json);
+
+        StringBuilder html = new StringBuilder();
+        html.append("<html><head><title>Погода</title></head><body>");
+        html.append("<h1>Информация о погоде</h1>");
+        html.append("<p><b>Текущая температура:</b> ").append(currentTemp).append("°C</p>");
+        html.append("<p><b>Средняя дневная температура за ").append(limit).append(" суток:</b> ")
+                .append(String.format("%.2f", averageTemp)).append("°C</p>");
+        html.append("<hr>");
+        html.append("<h3>Полный ответ от сервиса (JSON):</h3>");
+        html.append("<pre>").append(json).append("</pre>");
+        html.append("</body></html>");
+
+        return html.toString();
     }
 
     public void printWeatherInfo(String lat, String lon, int limit) throws IOException, InterruptedException {
