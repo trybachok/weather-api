@@ -1,24 +1,33 @@
+# Название workflow, отображаемое в интерфейсе GitHub Actions
 name: CI-CD
 
+# Триггеры запуска workflow:
+# 1. При пуше (push) в ветку master
+# 2. При создании или обновлении pull request в ветку master
 on:
   push:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
 
+# Права доступа для токена GITHUB_TOKEN (необходимы для публикации отчета о тестах)
 permissions:
   contents: read
   checks: write
   pull-requests: write
 
 jobs:
+  # Первая джоба: Сборка и тестирование приложения
   build-test:
     runs-on: ubuntu-latest
 
     steps:
+      # Используется экшен actions/checkout@v4 для клонирования кода репозитория в runner
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Используется экшен actions/setup-java@v4 для установки JDK 17 (дистрибутив Temurin)
+      # Также настраивается кэширование зависимостей Maven для ускорения последующих запусков
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
@@ -26,10 +35,12 @@ jobs:
           java-version: "17"
           cache: maven
 
+      # Запуск тестов и сборки проекта через Maven в пакетном режиме (-B)
       - name: Build & Test
         run: mvn -B clean test
 
-      # Отчет по тестам в интерфейсе GitHub (JUnit XML из Surefire)
+      # Используется экшен dorny/test-reporter@v1 для визуализации результатов тестов JUnit
+      # Отчет будет доступен прямо во вкладке "Checks" коммита в GitHub
       - name: Publish JUnit Report
         if: always()
         uses: dorny/test-reporter@v1
@@ -38,7 +49,8 @@ jobs:
           path: target/surefire-reports/*.xml
           reporter: java-junit
 
-      # На всякий случай — артефакты отчётов (если нужно скачать)
+      # Используется экшен actions/upload-artifact@v4 для сохранения артефактов (отчетов)
+      # Это позволяет скачать подробные логи тестов в случае их падения
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -46,12 +58,17 @@ jobs:
           name: surefire-reports
           path: target/surefire-reports/
 
+  # Вторая джоба: Деплой приложения
+  # Зависимость: джоба 'deploy' запустится только после успешного завершения 'build-test'
   deploy:
     needs: build-test
     runs-on: ubuntu-latest
+    # Условие: деплой выполняется только при пуше в master (не для pull request)
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
 
     steps:
+      # Отправка POST-запроса на вебхук Render для инициации автоматического деплоя
+      # Используется секрет RENDER_DEPLOY_HOOK, настроенный в репозитории
       - name: Trigger Render Deploy Hook
         run: |
           curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
