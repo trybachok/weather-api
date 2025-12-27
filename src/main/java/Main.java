@@ -42,7 +42,7 @@ public class Main {
             try {
                 response = service.getWeatherHtml(AppConstants.LAT, AppConstants.LON, AppConstants.LIMIT);
             } catch (IOException e) {
-                response = "<h1>Ошибка сети или API</h1><p>" + e.getMessage() + "</p>";
+                response = "<h2 style=\"font-family: monospace;\">Ошибка сети или API</h2><p style=\"font-family: monospace;\">" + e.getMessage() + "</p>";
                 statusCode = 502;
             } catch (InterruptedException e) {
                 response = "<h1>Выполнение прервано</h1>";
