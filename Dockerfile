@@ -7,15 +7,15 @@ WORKDIR /app
 # Копируем файл конфигурации Maven
 COPY pom.xml .
 # Загружаем зависимости проекта заранее
-RUN mvn -q -DskipTests dependency:go-offline
+RUN mvn -q dependency:go-offline
 
 # Копируем исходный код приложения
 COPY src ./src
 
 # Собираем jar + отдельно зависимости
 # Собираем проект, копируем зависимости и выводим список файлов
-RUN mvn -q -DskipTests package && \
-    mvn -q -DskipTests dependency:copy-dependencies -DoutputDirectory=target/dependency && \
+RUN mvn -q package && \
+    mvn -q dependency:copy-dependencies -DoutputDirectory=target/dependency && \
     echo "== target ==" && ls -la target
 
 # ---- runtime stage ----
